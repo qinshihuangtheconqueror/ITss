@@ -2,12 +2,12 @@ package Project_ITSS.PlaceOrder.Service;
 
 import Project_ITSS.PlaceOrder.Entity.Order;
 import Project_ITSS.PlaceOrder.Entity.DeliveryInformation;
-import Project_ITSS.PlaceOrder.Repository.OrderRepository_PlaceOrder;
+import Project_ITSS.PlaceOrder.Repository.IOrderRepository;
 import Project_ITSS.vnpay.common.repository.TransactionRepository;
 import Project_ITSS.vnpay.common.entity.TransactionInfo;
 import Project_ITSS.vnpay.common.dto.RefundRequest;
 import Project_ITSS.vnpay.common.service.VNPayService;
-import Project_ITSS.PlaceOrder.Service.NonDBService_PlaceOrder;
+import Project_ITSS.PlaceOrder.Strategy.PaymentStrategy.RefundResult;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Concrete implementation of OrderCancellationTemplate for VNPay payment method
+ * Implements Template Method Pattern - overrides specific steps for VNPay
  */
 @Service
 public class VNPayOrderCancellationService extends OrderCancellationTemplate {
@@ -23,7 +24,7 @@ public class VNPayOrderCancellationService extends OrderCancellationTemplate {
     private static final Logger logger = LoggerFactory.getLogger(VNPayOrderCancellationService.class);
     
     @Autowired
-    private OrderRepository_PlaceOrder orderRepository;
+    private IOrderRepository orderRepository;
     
     @Autowired
     private TransactionRepository transactionRepository;
@@ -32,23 +33,30 @@ public class VNPayOrderCancellationService extends OrderCancellationTemplate {
     private VNPayService vnPayService;
     
     @Autowired
-    private NonDBService_PlaceOrder mailService;
+    private INotificationService notificationService;
     
     @Override
     protected Order validateOrder(long orderId) {
-        logger.info("Validating order: {}", orderId);
-        return orderRepository.getOrderById(orderId);
+        logger.info("Validating VNPay order: {}", orderId);
+        return orderRepository.findById(orderId);
     }
     
     @Override
     protected void updateOrderStatus(long orderId, String status) {
-        logger.info("Updating order {} status to: {}", orderId, status);
-        orderRepository.updateOrderStatus(orderId, status);
+        logger.info("Updating VNPay order {} status to: {}", orderId, status);
+        orderRepository.updateStatus(orderId, status);
+    }
+    
+    @Override
+    protected boolean validateTransaction(long orderId) {
+        logger.info("Validating VNPay transaction for order: {}", orderId);
+        TransactionInfo transaction = transactionRepository.findByOrderId(String.valueOf(orderId));
+        return transaction != null;
     }
     
     @Override
     protected RefundResult processRefund(long orderId, HttpServletRequest request) {
-        logger.info("Processing refund for order: {}", orderId);
+        logger.info("Processing VNPay refund for order: {}", orderId);
         
         RefundResult result = new RefundResult();
         
@@ -69,57 +77,54 @@ public class VNPayOrderCancellationService extends OrderCancellationTemplate {
             refundRequest.setTranType("02"); // 02: Hoàn toàn bộ giao dịch
             refundRequest.setUser("admin");
             
-            // Process refund through VNPay
-            var refundResponse = vnPayService.refundTransaction(refundRequest, request);
+            // Process refund through VNPay service
+            VNPayService.RefundResponse refundResponse = vnPayService.refundTransaction(refundRequest, request);
             
-            // Check VNPay response
+            // Parse response and set result
             if (refundResponse != null && "00".equals(refundResponse.getVnp_ResponseCode())) {
                 result.setSuccess(true);
                 result.setMessage("Refund processed successfully");
-                result.setAmount(transaction.getAmount().doubleValue() / 100); // Convert from VND * 100
-                result.setMethod("VNPay Refund");
-                logger.info("Refund successful for order: {}", orderId);
+                result.setAmount(transaction.getAmount().doubleValue());
+                result.setMethod("VNPay");
+                result.setTransactionId(transaction.getTransactionNo());
             } else {
                 result.setSuccess(false);
-                result.setMessage(refundResponse != null ? 
-                    refundResponse.getVnp_Message() : "Refund failed");
-                logger.error("Refund failed for order: {}", orderId);
+                result.setMessage("Refund failed: " + (refundResponse != null ? refundResponse.getVnp_Message() : "Unknown error"));
             }
             
         } catch (Exception e) {
             result.setSuccess(false);
             result.setMessage("Error processing refund: " + e.getMessage());
-            logger.error("Error processing refund for order {}: {}", orderId, e.getMessage());
+            logger.error("Error processing VNPay refund for order {}: {}", orderId, e.getMessage());
         }
         
         return result;
     }
     
     @Override
-    protected void sendNotification(long orderId) {
-        logger.info("Sending notification for cancelled order: {}", orderId);
+    protected void sendNotification(long orderId, RefundResult refundResult) {
+        logger.info("Sending VNPay notification for cancelled order: {}", orderId);
         
         try {
-            Order order = orderRepository.getOrderById(orderId);
+            Order order = orderRepository.findById(orderId);
             if (order != null) {
-                DeliveryInformation deliveryInfo = orderRepository.getDeliveryInformationById(order.getDelivery_id());
-                if (deliveryInfo != null && deliveryInfo.getEmail() != null) {
-                    String subject = "Thông báo hủy đơn hàng";
-                    String content = "Đơn hàng #" + orderId + " của bạn đã được hủy và sẽ được hoàn tiền trong thời gian sớm nhất.";
-                    mailService.SendSuccessEmail(deliveryInfo.getEmail(), subject, content);
-                    logger.info("Notification sent to: {}", deliveryInfo.getEmail());
-                }
+                notificationService.sendCancellationNotification(order, refundResult);
             }
         } catch (Exception e) {
-            logger.error("Error sending notification for order {}: {}", orderId, e.getMessage());
+            logger.error("Error sending VNPay notification for order {}: {}", orderId, e.getMessage());
             // Don't fail the entire cancellation process if notification fails
         }
     }
     
     @Override
     protected void logCancellation(long orderId, String message) {
-        logger.info("Order cancellation log - Order: {}, Message: {}", orderId, message);
+        logger.info("VNPay order cancellation log - Order: {}, Message: {}", orderId, message);
         // Here you could also save to database audit log
+    }
+    
+    @Override
+    protected String getPaymentMethodName() {
+        return "VNPay";
     }
     
     /**
@@ -130,9 +135,9 @@ public class VNPayOrderCancellationService extends OrderCancellationTemplate {
         boolean canCancel = super.canCancelOrder(order);
         if (canCancel) {
             // Additional VNPay specific validation could be added here
-            logger.info("Order {} can be cancelled", order.getOrder_id());
+            logger.info("VNPay order {} can be cancelled", order.getOrder_id());
         } else {
-            logger.warn("Order {} cannot be cancelled. Status: {}", order.getOrder_id(), order.getStatus());
+            logger.warn("VNPay order {} cannot be cancelled. Status: {}", order.getOrder_id(), order.getStatus());
         }
         return canCancel;
     }

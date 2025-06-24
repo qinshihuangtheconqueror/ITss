@@ -1,80 +1,84 @@
 package Project_ITSS.PlaceOrder.Service;
 
 import Project_ITSS.PlaceOrder.Entity.Order;
-import Project_ITSS.PlaceOrder.Entity.DeliveryInformation;
-import Project_ITSS.vnpay.common.entity.TransactionInfo;
-import Project_ITSS.vnpay.common.dto.RefundRequest;
+import Project_ITSS.PlaceOrder.Command.CommandResult;
+import Project_ITSS.PlaceOrder.Strategy.PaymentStrategy.RefundResult;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Service;
 
 /**
  * Template Method Pattern for Order Cancellation
  * Defines the skeleton of the cancellation algorithm, letting subclasses override specific steps
+ * Implements Template Method Pattern for better extensibility
  */
 @Service
 public abstract class OrderCancellationTemplate {
     
     /**
      * Template method - defines the algorithm structure
+     * This is the main algorithm that cannot be overridden (final)
      */
-    public final CancellationResult executeCancellation(long orderId, HttpServletRequest request) {
-        CancellationResult result = new CancellationResult();
-        
+    public final CommandResult executeCancellation(long orderId, HttpServletRequest request) {
         try {
             // Step 1: Validate order
             Order order = validateOrder(orderId);
             if (order == null) {
-                result.setSuccess(false);
-                result.setMessage("Order not found");
-                return result;
+                return CommandResult.failure("Order not found", "ORDER_NOT_FOUND");
             }
             
             // Step 2: Check if order can be cancelled
             if (!canCancelOrder(order)) {
-                result.setSuccess(false);
-                result.setMessage("Order cannot be cancelled. Only pending orders can be cancelled.");
-                return result;
+                return CommandResult.failure("Order cannot be cancelled. Only pending orders can be cancelled.", "INVALID_STATUS");
             }
             
-            // Step 3: Update order status
+            // Step 3: Update order status to cancelled
             updateOrderStatus(orderId, "cancelled");
             
-            // Step 4: Process refund
+            // Step 4: Validate transaction
+            if (!validateTransaction(orderId)) {
+                // Rollback order status if validate transaction fail
+                updateOrderStatus(orderId, order.getStatus());
+                return CommandResult.failure("Transaction validation failed. Cannot cancel/refund.", "TRANSACTION_INVALID");
+            }
+            
+            // Step 5: Process refund
             RefundResult refundResult = processRefund(orderId, request);
             if (!refundResult.isSuccess()) {
                 // Rollback order status if refund fails
                 updateOrderStatus(orderId, order.getStatus());
-                result.setSuccess(false);
-                result.setMessage(refundResult.getMessage());
-                return result;
+                return CommandResult.failure(refundResult.getMessage(), "REFUND_FAILED");
             }
             
-            // Step 5: Send notification
-            sendNotification(orderId);
+            // Step 6: Send notification
+            sendNotification(orderId, refundResult);
             
-            // Step 6: Log cancellation
+            // Step 7: Log cancellation
             logCancellation(orderId, "Order cancelled successfully");
             
-            result.setSuccess(true);
-            result.setMessage("Order cancelled successfully");
-            result.setRefundAmount(refundResult.getAmount());
-            result.setRefundMethod(refundResult.getMethod());
+            // Step 8: Create success result
+            CancellationData cancellationData = new CancellationData();
+            cancellationData.setOrderId(orderId);
+            cancellationData.setRefundAmount(refundResult.getAmount());
+            cancellationData.setRefundMethod(refundResult.getMethod());
+            cancellationData.setTransactionId(refundResult.getTransactionId());
+            cancellationData.setPaymentMethod(getPaymentMethodName());
+            
+            return CommandResult.success("Order cancelled successfully", cancellationData);
             
         } catch (Exception e) {
-            result.setSuccess(false);
-            result.setMessage("Internal error: " + e.getMessage());
             logCancellation(orderId, "Cancellation failed: " + e.getMessage());
+            return CommandResult.failure("Internal error: " + e.getMessage(), "INTERNAL_ERROR");
         }
-        
-        return result;
     }
     
     // Abstract methods - must be implemented by subclasses
     protected abstract Order validateOrder(long orderId);
     protected abstract void updateOrderStatus(long orderId, String status);
+    protected abstract boolean validateTransaction(long orderId);
     protected abstract RefundResult processRefund(long orderId, HttpServletRequest request);
-    protected abstract void sendNotification(long orderId);
+    protected abstract void sendNotification(long orderId, RefundResult refundResult);
     protected abstract void logCancellation(long orderId, String message);
+    protected abstract String getPaymentMethodName();
     
     // Hook method - can be overridden by subclasses
     protected boolean canCancelOrder(Order order) {
@@ -82,37 +86,27 @@ public abstract class OrderCancellationTemplate {
     }
     
     // Helper classes
-    public static class CancellationResult {
-        private boolean success;
-        private String message;
+    public static class CancellationData {
+        private long orderId;
         private double refundAmount;
         private String refundMethod;
+        private String transactionId;
+        private String paymentMethod;
         
         // Getters and setters
-        public boolean isSuccess() { return success; }
-        public void setSuccess(boolean success) { this.success = success; }
-        public String getMessage() { return message; }
-        public void setMessage(String message) { this.message = message; }
+        public long getOrderId() { return orderId; }
+        public void setOrderId(long orderId) { this.orderId = orderId; }
+        
         public double getRefundAmount() { return refundAmount; }
         public void setRefundAmount(double refundAmount) { this.refundAmount = refundAmount; }
+        
         public String getRefundMethod() { return refundMethod; }
         public void setRefundMethod(String refundMethod) { this.refundMethod = refundMethod; }
-    }
-    
-    public static class RefundResult {
-        private boolean success;
-        private String message;
-        private double amount;
-        private String method;
         
-        // Getters and setters
-        public boolean isSuccess() { return success; }
-        public void setSuccess(boolean success) { this.success = success; }
-        public String getMessage() { return message; }
-        public void setMessage(String message) { this.message = message; }
-        public double getAmount() { return amount; }
-        public void setAmount(double amount) { this.amount = amount; }
-        public String getMethod() { return method; }
-        public void setMethod(String method) { this.method = method; }
+        public String getTransactionId() { return transactionId; }
+        public void setTransactionId(String transactionId) { this.transactionId = transactionId; }
+        
+        public String getPaymentMethod() { return paymentMethod; }
+        public void setPaymentMethod(String paymentMethod) { this.paymentMethod = paymentMethod; }
     }
 } 

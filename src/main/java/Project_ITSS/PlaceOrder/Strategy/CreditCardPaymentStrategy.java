@@ -3,6 +3,7 @@ package Project_ITSS.PlaceOrder.Strategy;
 import Project_ITSS.vnpay.common.entity.TransactionInfo;
 import Project_ITSS.vnpay.common.dto.RefundRequest;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +17,9 @@ import Project_ITSS.vnpay.common.repository.TransactionRepository;
 public class CreditCardPaymentStrategy implements PaymentStrategy {
     
     private static final Logger logger = LoggerFactory.getLogger(CreditCardPaymentStrategy.class);
+    
+    @Autowired
+    private TransactionRepository transactionRepository;
     
     @Override
     public RefundResult processRefund(RefundRequest request, HttpServletRequest httpRequest) {
@@ -54,7 +58,7 @@ public class CreditCardPaymentStrategy implements PaymentStrategy {
     public boolean validateTransaction(String orderId, TransactionRepository transactionRepository) {
         logger.info("Validating CreditCard transaction for order: {}", orderId);
         try {
-            TransactionInfo transaction = transactionRepository.findByOrderId(orderId);
+            TransactionInfo transaction = this.transactionRepository.findByOrderId(orderId);
             if (transaction == null) {
                 logger.warn("No CreditCard transaction found for order: {}", orderId);
                 return false;
