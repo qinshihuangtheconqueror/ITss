@@ -252,7 +252,7 @@ public class VNPayService {
         // Sort parameters by key
         List<String> fieldNames = new ArrayList<>(params.keySet());
         Collections.sort(fieldNames);
-        
+
         // Create hash data
         StringBuilder hashData = new StringBuilder();
         for (String fieldName : fieldNames) {
@@ -261,10 +261,9 @@ public class VNPayService {
                 if (hashData.length() > 0) {
                     hashData.append('&');
                 }
-                hashData.append(fieldName).append('=').append(URLEncoder.encode(fieldValue, StandardCharsets.US_ASCII));
+                hashData.append(fieldName).append('=').append(fieldValue); // KHÔNG encode!
             }
         }
-        
         return vnPayConfig.hmacSHA512(vnPayConfig.getSecretKey(), hashData.toString());
     }
 
@@ -297,34 +296,33 @@ public class VNPayService {
         try {
             List<String> fieldNames = new ArrayList<>(vnp_Params.keySet());
             Collections.sort(fieldNames);
+
+            // 1. Sinh chuỗi ký KHÔNG encode
             StringBuilder hashData = new StringBuilder();
-            StringBuilder query = new StringBuilder();
-            Iterator<String> itr = fieldNames.iterator();
-            
-            while (itr.hasNext()) {
-                String fieldName = itr.next();
-                String fieldValue = vnp_Params.get(fieldName);
-                if ((fieldValue != null) && (fieldValue.length() > 0)) {
-                    // Build hash data - URL encode values
-                    hashData.append(fieldName);
-                    hashData.append('=');
-                    hashData.append(URLEncoder.encode(fieldValue, StandardCharsets.US_ASCII.toString()));
-                    
-                    // Build query - URL encode both fieldName and value
-                    query.append(URLEncoder.encode(fieldName, StandardCharsets.US_ASCII.toString()));
-                    query.append('=');
-                    query.append(URLEncoder.encode(fieldValue, StandardCharsets.US_ASCII.toString()));
-                    
-                    if (itr.hasNext()) {
-                        query.append('&');
-                        hashData.append('&');
-                    }
+            for (int i = 0; i < fieldNames.size(); i++) {
+                String key = fieldNames.get(i);
+                String value = vnp_Params.get(key);
+                if (value != null && value.length() > 0) {
+                    hashData.append(key).append("=").append(value);
+                    if (i < fieldNames.size() - 1) hashData.append("&");
                 }
             }
-            
-            String queryUrl = query.toString();
             String vnp_SecureHash = vnPayConfig.hmacSHA512(vnPayConfig.getSecretKey(), hashData.toString());
-            return queryUrl + "&vnp_SecureHash=" + vnp_SecureHash;
+
+            // 2. Tạo query string (có encode)
+            StringBuilder query = new StringBuilder();
+            for (int i = 0; i < fieldNames.size(); i++) {
+                String key = fieldNames.get(i);
+                String value = vnp_Params.get(key);
+                if (value != null && value.length() > 0) {
+                    query.append(URLEncoder.encode(key, StandardCharsets.US_ASCII.toString()))
+                         .append("=")
+                         .append(URLEncoder.encode(value, StandardCharsets.US_ASCII.toString()));
+                    if (i < fieldNames.size() - 1) query.append("&");
+                }
+            }
+            query.append("&vnp_SecureHash=").append(vnp_SecureHash);
+            return query.toString();
         } catch (UnsupportedEncodingException e) {
             e.printStackTrace();
             return "";

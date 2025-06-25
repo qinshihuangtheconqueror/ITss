@@ -3,15 +3,19 @@ package Project_ITSS.vnpay.common.service;
 import Project_ITSS.vnpay.common.entity.TransactionInfo;
 import Project_ITSS.vnpay.common.repository.TransactionRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
+import java.util.HashMap;
 
+/**
+ * Refactored OrderService - sử dụng NotificationService interface
+ * Giải quyết vấn đề tight coupling với JavaMailSender
+ */
 @Service
 public class OrderService {
     private static final Logger logger = LoggerFactory.getLogger(OrderService.class);
@@ -20,7 +24,8 @@ public class OrderService {
     private TransactionRepository transactionRepository;
 
     @Autowired
-    private JavaMailSender mailSender;
+    @Qualifier("emailNotificationService")
+    private NotificationService notificationService;
 
     @Transactional
     public void updateOrderStatus(String orderId, String status) {
@@ -39,7 +44,7 @@ public class OrderService {
             TransactionInfo transaction = new TransactionInfo();
             transaction.setOrderId(orderId);
             transaction.setTransactionNo(fields.get("vnp_TransactionNo"));
-            transaction.setAmount(Long.parseLong(fields.getOrDefault("vnp_Amount", "0")));
+            transaction.setAmount(Long.parseLong(fields.getOrDefault("vnp_Amount", "0")) / 100);
             transaction.setBankCode(fields.get("vnp_BankCode"));
             transaction.setResponseCode(fields.get("vnp_ResponseCode"));
             transaction.setTransactionStatus(fields.get("vnp_TransactionStatus"));
@@ -54,13 +59,7 @@ public class OrderService {
 
     public void sendNotification(String orderId, String message) {
         try {
-            // TODO: Implement actual email sending logic
-            SimpleMailMessage mailMessage = new SimpleMailMessage();
-            mailMessage.setTo("customer@example.com"); // TODO: Get actual customer email
-            mailMessage.setSubject("Payment Notification - Order " + orderId);
-            mailMessage.setText(message);
-            
-            mailSender.send(mailMessage);
+            notificationService.sendNotification(orderId, message);
             logger.info("Notification sent for order {}: {}", orderId, message);
         } catch (Exception e) {
             logger.error("Error sending notification for order {}: {}", orderId, e.getMessage());

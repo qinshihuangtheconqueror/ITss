@@ -16,6 +16,10 @@ public class IPNResponse {
     private String Message;
     private String Checksum;
 
+    public IPNResponse() {
+        // Constructor mặc định
+    }
+
     public IPNResponse(String rspCode, String message) {
         this.RspCode = rspCode;
         this.Message = message;
